@@ -7,14 +7,18 @@ from urllib.parse import urljoin
 
 from bs4 import BeautifulSoup, Tag
 
-from .models import Job
+from src.freelancer_parser.models import Job
 
 
 class FreelancerParser:
     CARD_SELECTORS = ".JobSearchCard-item, [data-job-card], article.job-card, fl-project-contest-card.ProjectCard"
     TITLE_SELECTORS = ".JobSearchCard-primary-heading-link, [data-job-title], .Title-text, h2 a, h3 a"
     PRICE_SELECTORS = ".JobSearchCard-primary-price, [data-job-price], .BudgetUpgradeWrapper-budget, .price"
-    DESCRIPTION_SELECTORS = ".JobSearchCard-primary-description, [data-job-description], .Content, .description"
+    DESCRIPTION_SELECTORS = (
+        ".JobSearchCard-primary-description, [data-job-description], "
+        "p.mb-xxsmall:not(.AverageBid-copy), .description, "
+        ".ContentTextSizeSetterContainer, .Content"
+    )
     SKILL_SELECTORS = ".JobSearchCard-primary-tags a, [data-job-skills] a, .SkillsWrapper-skill, .skills a"
     POSTED_AT_SELECTORS = ".JobSearchCard-primary-heading-days, [data-job-posted-at], .posted-at, time"
 
@@ -26,6 +30,13 @@ class FreelancerParser:
             if job is not None:
                 jobs.append(job)
         return jobs
+
+    def parse_detail_description(self, html: str) -> str:
+        soup = BeautifulSoup(html, "html.parser")
+        element = soup.select_one(
+            ".Project-description, .ProjectDescription, .LongDescription, [data-project-description]"
+        )
+        return self._text(element) if element else ""
 
     def _parse_card(self, card: Tag, source_url: str) -> Job | None:
         title_element = card.select_one(self.TITLE_SELECTORS)
@@ -39,20 +50,34 @@ class FreelancerParser:
         return Job(
             title=title,
             price=self._selected_text(card, self.PRICE_SELECTORS),
+            price_cad="",
             description=self._description(card),
             skills=self._skills(card),
             url=urljoin(source_url, href),
             posted_at=self._posted_at(card),
+            bids=0,
         )
 
     @staticmethod
+    def _first_match(card: Tag, selectors: str) -> Tag | None:
+        """Try each selector in priority order; return the first that matches
+        (unlike select_one on a comma-list, which returns whichever selector's
+        match appears first in the DOM, not whichever selector is listed first).
+        """
+        for selector in selectors.split(","):
+            element = card.select_one(selector.strip())
+            if element is not None:
+                return element
+        return None
+
+    @staticmethod
     def _selected_text(card: Tag, selector: str) -> str:
-        element = card.select_one(selector)
+        element = FreelancerParser._first_match(card, selector)
         return FreelancerParser._text(element) if element else ""
 
     @staticmethod
     def _description(card: Tag) -> str:
-        element = card.select_one(FreelancerParser.DESCRIPTION_SELECTORS)
+        element = FreelancerParser._first_match(card, FreelancerParser.DESCRIPTION_SELECTORS)
         if element is None:
             return ""
         read_more = element.select_one(".ReadMoreButton")
@@ -74,6 +99,9 @@ class FreelancerParser:
         element = card.select_one(FreelancerParser.POSTED_AT_SELECTORS)
         if element is not None:
             return str(element.get("datetime") or element.get("data-job-posted-at") or FreelancerParser._text(element))
+        relative_time = card.select_one("fl-relative-time")
+        if relative_time is not None and relative_time.parent is not None:
+            return FreelancerParser._text(relative_time.parent)
         for text in card.stripped_strings:
             if re.fullmatch(r"\d+\s+(?:minute|hour|day|week|month)s?\s+ago", text):
                 return text

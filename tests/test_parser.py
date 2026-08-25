@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from src.freelancer_parser.parser import FreelancerParser
+from legacy.site_scraper.parser import FreelancerParser
 
 
 FIXTURE = Path(__file__).parent / "fixtures" / "freelancer_search.html"
@@ -40,3 +40,8 @@ def test_parser_extracts_current_logged_in_search_cards() -> None:
 
 def test_parser_returns_no_jobs_for_empty_page() -> None:
     assert FreelancerParser().parse("<html><body></body></html>") == []
+
+
+def test_parser_extracts_full_description_from_detail_page() -> None:
+    html = "<section class='ProjectDescription'>First paragraph. <p>Second paragraph.</p></section>"
+    assert FreelancerParser().parse_detail_description(html) == "First paragraph. Second paragraph."

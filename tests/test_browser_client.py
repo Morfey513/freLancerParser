@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from src.freelancer_parser.browser_client import FreelancerBrowserClient
+from legacy.site_scraper.browser_client import FreelancerBrowserClient
 
 
 def test_browser_client_keeps_configuration(tmp_path: Path) -> None:

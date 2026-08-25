@@ -2,8 +2,7 @@
 .idea/
 __pycache__/
 .pytest_cache/
-data/*.json
-data/raw_page.html
-data/opera_profile/
-data/opera_existing_session/
-data/browser_profile/
+
+config.json
+.env
+data/

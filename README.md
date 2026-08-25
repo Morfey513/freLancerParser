@@ -1,69 +1,94 @@
 # Freelancer Parser
 
-V2 parser for rendered Freelancer search-result pages. It uses a separate local
-Opera profile so you can log in manually; credentials are never stored in code.
+## Overview
 
-## Setup
+Freelancer Parser retrieves active Freelancer.com projects and writes them as
+JSON. The official API scraper is the current and primary implementation: it
+is faster than browser automation and does not require an interactive browser
+session.
+
+## Quick Start
+
+Python 3.10+ is required. Create a virtual environment and install the
+declared dependencies plus the API client packages:
 
 ```powershell
+python -m venv .venv
 .\.venv\Scripts\Activate.ps1
-pip install -r requirements.txt
+python -m pip install -r requirements.txt
+python -m pip install requests freelancersdk
 ```
 
-## Save a login session
+Create a private `config.json` in the project root:
+
+```json
+{
+  "oauth_token": "YOUR_FREELANCER_OAUTH_TOKEN_HERE",
+  "limit": 60,
+  "skills": {
+    "Python": 95,
+    "Web Development": null
+  }
+}
+```
+
+To obtain a token, log into Freelancer, then open the official [Freelancer
+Developer Applications page](https://accounts.freelancer.com/settings/develop),
+create a Personal Access Token, and grant the required Projects read access.
+The `FLN_OAUTH_TOKEN` environment variable overrides `oauth_token` in the
+configuration file.
+
+Run the API scraper:
 
 ```powershell
-python main.py --login
+python api_main.py
 ```
 
-Log in in the browser window yourself, then return to the terminal and press
-Enter. The local Opera profile is stored in `data/opera_profile/`, which is
-ignored by Git because it contains session data.
-
-Opera is detected at its standard per-user Windows location. If yours is
-installed elsewhere, set `OPERA_EXECUTABLE` to the full path of `opera.exe`.
-
-## Reuse an existing Opera session
-
-Close Opera first, then add `--reuse-opera-session` to import a copy of its
-profile into `data/opera_existing_session/`. Your normal Opera profile is not
-changed.
+Major options include one-run skill and limit overrides and skill-catalog
+refreshing:
 
 ```powershell
-python main.py "https://www.freelancer.com/search/projects/?q=python" --reuse-opera-session
+python api_main.py --skills "PHP" "React.js" "MySQL" --limit 20
+python api_main.py --refresh-jobs-catalog
 ```
 
-If Opera stores its profile elsewhere, set `OPERA_PROFILE_DIR` to that folder.
+The API output is written to `data/jobs_api.json`; the resolved skill catalog
+is cached in `data/jobs_catalog.json`. Jobs include title, budgets, full
+description, skills, URL, posting time, and the `bids` count. See
+[APIdocumentation.md](APIdocumentation.md) for API behavior, query parameters,
+payload handling, and detailed examples.
 
-## Use the actual open Opera window
+## Project Structure
 
-Playwright cannot attach to an ordinary running Opera instance. Close Opera, then
-start it once with a local debugging port:
-
-```powershell
-& "C:\Users\And\AppData\Local\Programs\Opera\opera.exe" --remote-debugging-port=9222
+```text
+api_main.py                       # Primary API CLI
+src/freelancer_parser/
+    api_client.py                 # API access and job conversion
+    config.py                     # Configuration loading
+    skills.py                     # Skill resolution and catalog caching
+    models.py                     # Shared Job model
+legacy/site_scraper/              # Retained browser scraper
+tests/                            # Automated tests
+APIdocumentation.md               # Detailed API documentation
 ```
 
-Log in normally in that Opera window, then run the parser with:
+## Legacy Browser Scraper
 
-```powershell
-python main.py "https://www.freelancer.com/search/projects/?q=python" --connect-existing-opera
-```
-
-This attaches to the already-open Opera process, reuses its tabs/session, and
-does not close Opera when parsing completes.
-
-## Run
+The original browser-based scraper remains under `legacy/site_scraper/` for
+compatibility, reference, and possible fallback use. It is not the primary
+implementation. The root `main.py` command is retained only as its
+backward-compatible launcher:
 
 ```powershell
 python main.py "https://www.freelancer.com/search/projects/?q=python"
 ```
 
-The response is saved to `data/raw_page.html`; parsed jobs are written to `data/jobs.json`.
-Add `--headless` after you have saved a valid session to run without a browser window.
+It uses a persistent Opera profile and writes legacy outputs to
+`data/raw_page.html` and `data/jobs.json`. Use `python main.py --help` for its
+options.
 
-## Test
+## Testing
 
 ```powershell
-pytest
+python -m pytest
 ```

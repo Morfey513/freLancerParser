@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import shutil
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
@@ -76,25 +77,23 @@ class FreelancerBrowserClient:
             input("After you have logged in, press Enter to save the session and close the browser... ")
             context.close()
 
-    def fetch_page(self, url: str) -> str:
+    def fetch_page(self, url: str, expand_descriptions: bool = False) -> str:
         if self.cdp_url:
-            return self._fetch_from_existing_opera(url)
+            return self._fetch_from_existing_opera(url, expand_descriptions)
         self.profile_dir.mkdir(parents=True, exist_ok=True)
         with sync_playwright() as playwright:
             context = self._launch_context(playwright)
             try:
                 page = context.pages[0] if context.pages else context.new_page()
                 page.goto(url, wait_until="domcontentloaded", timeout=self.timeout_ms)
-                try:
-                    page.wait_for_selector(".JobSearchCard-item", timeout=self.timeout_ms)
-                except PlaywrightTimeoutError:
-                    # Preserve the HTML for diagnosis if the page changes or redirects.
-                    pass
+                self._wait_for_content(page, self._result_selector())
+                if expand_descriptions:
+                    self._expand_descriptions(page)
                 return page.content()
             finally:
                 context.close()
 
-    def _fetch_from_existing_opera(self, url: str) -> str:
+    def _fetch_from_existing_opera(self, url: str, expand_descriptions: bool = False) -> str:
         """Attach to Opera over CDP without closing the user's browser."""
         with sync_playwright() as playwright:
             browser = playwright.chromium.connect_over_cdp(self.cdp_url)
@@ -105,9 +104,64 @@ class FreelancerBrowserClient:
             if page is None:
                 page = context.new_page()
             page.goto(url, wait_until="domcontentloaded", timeout=self.timeout_ms)
-            try:
-                page.wait_for_selector(".JobSearchCard-item", timeout=self.timeout_ms)
-            except PlaywrightTimeoutError:
-                pass
+            self._wait_for_content(page, self._result_selector())
+            if expand_descriptions:
+                self._expand_descriptions(page)
             # Do not call browser.close(): this is the user's Opera process.
             return page.content()
+
+    def fetch_pages(
+        self,
+        urls: list[str],
+        ready_selector: str,
+        workers: int = 2,
+        expand_descriptions: bool = False,
+    ) -> list[str]:
+        if len(urls) == 1:
+            return [self.fetch_page(urls[0], expand_descriptions)]
+        if not self.cdp_url:
+            return [self.fetch_page(url, expand_descriptions) for url in urls]
+        with ThreadPoolExecutor(max_workers=min(workers, len(urls))) as executor:
+            return list(
+                executor.map(
+                    lambda url: self._fetch_new_tab(url, ready_selector, expand_descriptions),
+                    urls,
+                )
+            )
+
+    def _fetch_new_tab(self, url: str, ready_selector: str, expand_descriptions: bool) -> str:
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.connect_over_cdp(self.cdp_url)
+            if not browser.contexts:
+                raise RuntimeError("Opera has no available browser context.")
+            page = browser.contexts[0].new_page()
+            try:
+                page.goto(url, wait_until="domcontentloaded", timeout=self.timeout_ms)
+                self._wait_for_content(page, ready_selector)
+                if expand_descriptions:
+                    self._expand_descriptions(page)
+                return page.content()
+            finally:
+                page.close()
+
+    def _wait_for_content(self, page, selector: str) -> None:
+        try:
+            page.wait_for_selector(selector, timeout=self.timeout_ms)
+        except PlaywrightTimeoutError:
+            pass
+
+    @staticmethod
+    def _expand_descriptions(page) -> None:
+        """Click each visible card's normal 'more' control once before capture."""
+        buttons = page.locator(".ReadMoreButton")
+        for index in range(buttons.count() - 1, -1, -1):
+            try:
+                buttons.nth(index).click(timeout=2_000)
+            except PlaywrightTimeoutError:
+                # A card may have been re-rendered or its button may be absent.
+                continue
+        page.wait_for_timeout(250)
+
+    @staticmethod
+    def result_selector() -> str:
+        return ".JobSearchCard-item, fl-project-contest-card.ProjectCard"
